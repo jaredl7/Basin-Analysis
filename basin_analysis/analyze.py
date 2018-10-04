@@ -4,9 +4,13 @@ from itertools import product
 from collections import OrderedDict, namedtuple
 
 
+# These are the functions are allowed to be exported. (The others are used internally, and offer no
+# tangible benefit external to this solution.)
 __all__ = 'tiled_grid,coarse_grain_hist,determine_histogram_directions,partition'.split(',')
 
 
+# A lightweight read-only data structure to save and access basin information for a given
+# simulation.
 Basin = namedtuple('Basin', 'center indices area relative_area weight')
 
 
@@ -178,6 +182,43 @@ def coarse_grain_hist(hist, stride=4, acceptance_threshold=0.25, sentinel_value=
 
 
 def determine_histogram_directions(histogram):
+    """Given an input histogram, determine the gradients of steepest descent and their associated vectors.
+
+    For histograms with periodic-boundaries, this is done by creating a tiled array (i.e. the original array
+    is in the center of a 3 x 3 grid filled with 9 copies of itself), and then using extracting a subarray that
+    contains 1 row and column of the edges original array. For e.g. if our input array is:
+
+        1 2 3
+        4 5 6
+        7 8 9
+
+    The tiled array will be:
+
+         1 2 3 1 2 3 1 2 3
+         4 5 6 4 5 6 4 5 6
+         7 8 9 7 8 9 7 8 9
+         1 2 3 1 2 3 1 2 3
+         4 5 6 4 5 6 4 5 6
+         7 8 9 7 8 9 7 8 9
+         1 2 3 1 2 3 1 2 3
+         4 5 6 4 5 6 4 5 6
+         7 8 9 7 8 9 7 8 9
+
+    And, our "extended" array will be:
+
+         9 7 8 9 7
+         3 1 2 3 1
+         6 4 5 6 4
+         9 7 8 9 7
+         3 1 2 3 1
+
+    This ensures that when each 3 x 3 subarray is selected, the center element is always the nth element of
+    the histogram, from which we compare the values of the other 8 directions to determine the gradients.
+
+        :param histogram: (2D array) The input 2D histogram.
+        :return array_directions, u, v: (2D array, 2D array, 2D array) The array directions, and the u and v
+                                        vector 2D grids.
+    """
     tiled_hist = tiled_grid(histogram)
     start = histogram.shape[0] - 1
     end = histogram.shape[0] * 2 + 1
@@ -204,14 +245,27 @@ def determine_histogram_directions(histogram):
             # We only check chunks whose center index is non-zero.
             if chunk[1, 1] != 0.0:
                 for x, y in zip(locs[0], locs[1]):
+                    # determine the directions based on the coordinate of the smallest
+                    # element relative to the center (i.e. the current element).
                     coords = (x, y)
                     array_directions[i, j] = directions[coords]
                     u[i, j], v[i, j] = determine_direction(directions[coords])
     return array_directions, u, v
 
 
-def boundaries_mask(hist, basin_boundaries, bin_size):
-    indices = np.arange(0, hist.shape[0])  # `hist.shape` should be 144
+def boundaries_mask(histogram, basin_boundaries, bin_size):
+    """Given an input 2D histogram and its basin boundaries obtained by coarse-graining the histogram,
+    extract the corresponding indices to the original histogram.
+
+        :param histogram: (2D array) The original 2D histogram.
+        :param basin_boundaries: (OrderedDict) The basin boundaries (key: index, value: a list of 2D cartesian points)
+                                  obtained from a coarse-grained representation of the original histogram.
+        :param bin_size: (real) The bin_size used to generate the original histogram.
+        :return scaled_basins, basins_scaled: (OrderedDict, OrderedDict) A dictionary where the keys are basin numbers
+                                              and the values are the coordinates. And, a dictionary where the
+                                              coordinates are the keys, and the values are the basin numbers.
+    """
+    indices = np.arange(0, histogram.shape[0])  # `histogram.shape` should be 144
     stride = int(10 / bin_size)
     boundaries = indices[::stride]  # every `stride` items
     scaled_boundaries = boundaries / stride
@@ -229,10 +283,12 @@ def boundaries_mask(hist, basin_boundaries, bin_size):
             i = scaled_boundaries.index(x)
             j = scaled_boundaries.index(y)
 
+            # Obtain the indices for the original array that were "hidden" by the `stride`.
+            # This gets the x and y coordinates
             sbi = np.array(([boundaries[i]] * stride) + np.arange(0, stride, 1)).tolist()
             sbj = np.array(([boundaries[j]] * stride) + np.arange(0, stride, 1)).tolist()
 
-            # now save the adjusted coordinates
+            # Now save the adjusted coordinates.
             for si, sj in product(sbi, sbj):
                 coordinate = (si, sj)
                 scaled_basins[basin].append(coordinate)
@@ -241,6 +297,13 @@ def boundaries_mask(hist, basin_boundaries, bin_size):
 
 
 def partition(cg_hist):
+    """This function segments a coarse-grained histogram by gradients of steepest descent. Basin centers, or regions of
+    local minima, define basin centers, whose envelopes, relative areas and weights are determined.
+
+        :param cg_hist: (2D array) The coarse-grained array.
+        :return: (OrderedDict) An OrderedDict whose key is the basin number and value is the basin information stored
+                  as a namedtuple.
+    """
     x_dim, y_dim = cg_hist.shape
     array_directions, u, v = determine_histogram_directions(cg_hist)
 
