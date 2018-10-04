@@ -42,7 +42,7 @@ def check(**kwargs):
         :param kwargs: (dict) The dict of arguments to check.
         :return: None
     """
-    for key, value in kwargs.iteritems():
+    for key, value in kwargs.items():
         if key == 'stride':
             if type(value) is not int:
                 raise RuntimeError('The `stride` must be an integer.')
@@ -50,13 +50,13 @@ def check(**kwargs):
                 if value < 1:
                     raise RuntimeError('The `stride` must be a positive non-zero number.')
         elif key == 'acceptance_threshold':
-            if not np.isreal(value):
+            if type(value) is not float:
                 raise RuntimeError('The `acceptance_threshold` must be a float or an integer.')
             else:
                 if value > 1:
                     raise RuntimeError('The `acceptance_threshold` must be <= 1.0.')
         elif key == 'sentinel_value':
-            if not np.isreal(value):
+            if type(value) not in [float, int]:
                 raise RuntimeError('The `sentinel_value` must be a float or an integer.')
 
 
@@ -140,15 +140,15 @@ def coarse_grain_hist(hist, stride=4, acceptance_threshold=0.25, sentinel_value=
                                histogram is not logarithmic. Default value = 1.
         :return (cg_hist, masked_hist): (2D array, 2D array) The coarse-grained and "masked" histograms.
     """
-    check(stride=stride, mean_threshold=acceptance_threshold, sentinel_value=sentinel_value)
+    check(stride=stride, acceptance_threshold=acceptance_threshold, sentinel_value=sentinel_value)
 
     indices = np.arange(0, hist.shape[0]).tolist()
     boundaries = indices[::stride]
-    threshold = (1 - acceptance_threshold)*stride**2
+    threshold = np.floor((1 - acceptance_threshold)*stride**2)
 
-    cg_dim = hist.shape[0]/stride
+    cg_dim = hist.shape[0]//stride
     cg_hist = np.zeros(shape=(cg_dim, cg_dim))
-    masked_hist = np.zeros_like(shape=hist.shape)
+    masked_hist = np.zeros_like(hist)
 
     for i_index, i in enumerate(boundaries):
         for j_index, j in enumerate(boundaries):
@@ -166,8 +166,8 @@ def coarse_grain_hist(hist, stride=4, acceptance_threshold=0.25, sentinel_value=
             chunk[np.where(chunk == -np.nan)] = sentinel_value
             chunk[np.where(chunk == np.inf)] = sentinel_value
             chunk[np.where(chunk == -np.inf)] = sentinel_value
-            find_zeros = chunk[np.where(chunk == sentinel_value)]
             chunk[np.where(chunk == sentinel_value)] = 0
+            find_zeros = chunk[np.where(chunk == 0)]
 
             # Finally, we exclude any chunks which do not meet our
             # desired occupancy threshold. For e.g. if using a stride of 4,
@@ -182,7 +182,8 @@ def coarse_grain_hist(hist, stride=4, acceptance_threshold=0.25, sentinel_value=
 
 
 def determine_histogram_directions(histogram):
-    """Given an input histogram, determine the gradients of steepest descent and their associated vectors.
+    """Given an input histogram, determine the gradients of steepest descent and their associated vectors. This
+    is intended for use on a coarse-grained histogram, however any histogram can be used.
 
     For histograms with periodic-boundaries, this is done by creating a tiled array (i.e. the original array
     is in the center of a 3 x 3 grid filled with 9 copies of itself), and then using extracting a subarray that
