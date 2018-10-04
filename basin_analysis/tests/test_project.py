@@ -2,7 +2,6 @@
 # 1. https://stackoverflow.com/questions/6103825/how-to-properly-use-unit-testings-assertraises-with-nonetype-objects
 import unittest
 import numpy as np
-import matplotlib.pyplot as plt
 from basin_analysis.analyze import check, determine_direction, tiled_grid
 from basin_analysis.analyze import coarse_grain_hist, determine_histogram_directions, partition
 
@@ -149,6 +148,7 @@ class TestProject(unittest.TestCase):
         a 2D gaussian and several iterations to test the robustness of this technique.
 
         Ref: https://www.w3resource.com/python-exercises/numpy/python-numpy-exercise-79.php
+        TODO: complete
         """
         stride = 4
         extent = 12
@@ -164,10 +164,7 @@ class TestProject(unittest.TestCase):
         # Now we coarse-grain the histogram
         cg_hist, masked_hist = coarse_grain_hist(gaussian_hist, stride=stride, acceptance_threshold=0.25)
         array_directions, u, v = determine_histogram_directions(cg_hist)
-        plt.imshow(array_directions, cmap='jet')
-        plt.show()
-        print(111)
-        pass
+
 
     def test_partition(self):
         pass
