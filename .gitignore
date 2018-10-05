@@ -1,3 +1,4 @@
 .idea
 basin_analysis/*.pyc
 *.pyc
+Basin_Analysis.egg-info

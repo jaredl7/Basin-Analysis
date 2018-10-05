@@ -144,7 +144,7 @@ def coarse_grain_hist(hist, stride=4, acceptance_threshold=0.25, sentinel_value=
 
     indices = np.arange(0, hist.shape[0]).tolist()
     boundaries = indices[::stride]
-    threshold = np.floor((1 - acceptance_threshold)*stride**2)
+    threshold = int(np.floor((1 - acceptance_threshold)*stride**2))
 
     cg_dim = hist.shape[0]//stride
     cg_hist = np.zeros(shape=(cg_dim, cg_dim))
@@ -160,14 +160,19 @@ def coarse_grain_hist(hist, stride=4, acceptance_threshold=0.25, sentinel_value=
             # stride.
             chunk = hist[i:new_i, j:new_j]
 
-            # First, we remove all superfluous values - i.e. set them to some
-            # sentinel value, and then set those to zero.
+            # First, we remove all spurious values - i.e. set them to some
+            # sentinel value, and then set those to zero. This is necessary
+            # if a logarithm has been applied, sometimes `np.nan` and `np.inf`
+            # values will appear. These cells shouldn't be discounted, and
+            # should be included nonetheless. However, since keeping them at
+            # those values in the array would affect the determination of
+            # gradients of steepest descent, we reassign them to 0.
             chunk[np.where(chunk == np.nan)] = sentinel_value
             chunk[np.where(chunk == -np.nan)] = sentinel_value
             chunk[np.where(chunk == np.inf)] = sentinel_value
             chunk[np.where(chunk == -np.inf)] = sentinel_value
+            find_spurious = chunk[np.where(chunk == sentinel_value)]
             chunk[np.where(chunk == sentinel_value)] = 0
-            find_zeros = chunk[np.where(chunk == 0)]
 
             # Finally, we exclude any chunks which do not meet our
             # desired occupancy threshold. For e.g. if using a stride of 4,
@@ -175,7 +180,7 @@ def coarse_grain_hist(hist, stride=4, acceptance_threshold=0.25, sentinel_value=
             # less than 25% occupied (which will clean up the grid), the number
             # of found zeroes will be 12. Any chunk that meets this criterion will
             # be excluded.
-            if len(find_zeros) <= threshold:
+            if len(find_spurious) <= threshold:
                 cg_hist[i_index, j_index] = chunk.mean()
                 masked_hist[i:new_i, j:new_j] = hist[i:new_i, j:new_j]
     return cg_hist, masked_hist
