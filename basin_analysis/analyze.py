@@ -6,12 +6,12 @@ from collections import OrderedDict, namedtuple
 
 # These are the functions are allowed to be exported. (The others are used internally, and offer no
 # tangible benefit external to this solution.)
-__all__ = 'tiled_grid,coarse_grain_hist,determine_histogram_directions,partition'.split(',')
+__all__ = 'tiled_grid,coarse_grain_hist,determine_histogram_directions,partition,determine_basin_attributes'.split(',')
 
 
 # A lightweight read-only data structure to save and access basin information for a given
 # simulation.
-Basin = namedtuple('Basin', 'center indices area relative_area weight')
+Basin = namedtuple('Basin', 'center indices relative_area relative_weight')
 
 
 # Define the directions for a 3 x 3 square which we'll use to determine
@@ -251,7 +251,7 @@ def determine_histogram_directions(histogram):
             # We only check chunks whose center index is non-zero.
             if chunk[1, 1] != 0.0:
                 for x, y in zip(locs[0], locs[1]):
-                    # determine the directions based on the coordinate of the smallest
+                    # Determine the directions based on the coordinate of the smallest
                     # element relative to the center (i.e. the current element).
                     coords = (x, y)
                     array_directions[i, j] = directions[coords]
@@ -271,12 +271,13 @@ def boundaries_mask(histogram, basin_boundaries, bin_size):
                                               and the values are the coordinates. And, a dictionary where the
                                               coordinates are the keys, and the values are the basin numbers.
     """
-    indices = np.arange(0, histogram.shape[0])  # `histogram.shape` should be 144
+    indices = np.arange(0, histogram.shape[0])
     stride = int(10 / bin_size)
     boundaries = indices[::stride]  # every `stride` items
     scaled_boundaries = boundaries / stride
 
-    # since the boundaries are just scaled by the stride, we can go through the basin boundaries
+    # Since the boundaries are just scaled by the stride, we can go through the basin boundaries
+    # to populate the indices for the
     scaled_basins = OrderedDict()  # this is for the basins by the points
     basins_scaled = OrderedDict()  # this is for the points by the basins
 
@@ -290,7 +291,7 @@ def boundaries_mask(histogram, basin_boundaries, bin_size):
             j = scaled_boundaries.index(y)
 
             # Obtain the indices for the original array that were "hidden" by the `stride`.
-            # This gets the x and y coordinates
+            # This gets the "scaled" x and y coordinates.
             sbi = np.array(([boundaries[i]] * stride) + np.arange(0, stride, 1)).tolist()
             sbj = np.array(([boundaries[j]] * stride) + np.arange(0, stride, 1)).tolist()
 
@@ -313,24 +314,22 @@ def partition(cg_hist):
     x_dim, y_dim = cg_hist.shape
     array_directions, u, v = determine_histogram_directions(cg_hist)
 
-    centers = OrderedDict()
-    basins = OrderedDict()
-    areas = OrderedDict()
+    basin_boundaries = OrderedDict()
+    basin_areas = OrderedDict()
     for x in range(0, array_directions.shape[0]):
         for y in range(0, array_directions.shape[0]):
-            if array_directions[x, y] > 0:
+            if array_directions[x, y] not in [-1, 0]:
                 xx = copy(x)
                 yy = copy(y)
                 line = list()
                 found_center = False
-
                 # This loop will search for a basin center by following
-                # the available lines
+                # the available lines.
                 line.append((xx, yy))  # start at the current point
                 while not found_center:
-                    # determine the indices for the next element as indicated
+                    # Determine the indices for the next element as indicated
                     # by the directions of the current element in the quiver
-                    # vectors
+                    # vectors.
                     nx = xx + u[xx, yy]
                     ny = yy + v[xx, yy]
                     if nx == -1:
@@ -338,14 +337,14 @@ def partition(cg_hist):
                     if nx == x_dim:
                         nx = 0
                     if ny == -1:
-                        ny = y_dim
+                        ny = y_dim - 1
                     if ny == y_dim:
                         ny = 0
                     xx = nx
                     yy = ny
                     line.append((xx, yy))
 
-                    # check to see if the next element is a center
+                    # Check to see if the next element is a center.
                     if array_directions[xx, yy] == 5:
                         found_center = True
 
@@ -353,19 +352,35 @@ def partition(cg_hist):
                 # Using this fact, and that the lines will contain duplicate indices
                 # we simplify the found indices using a set.
                 center = line[-1]
-                if center not in centers:
-                    centers[center] = list(set(line))
-                else:
-                    centers[center] = list(set(line + centers[center]))
-                    areas[center] = len(centers[center])
 
+                if center not in basin_boundaries:
+                    basin_boundaries[center] = list(set(line))
+                else:
+                    basin_boundaries[center] += line
+                    basin_boundaries[center] = list(set(basin_boundaries[center]))
+                basin_areas[center] = len(basin_boundaries[center])
+    return basin_boundaries, basin_areas
+
+
+def determine_basin_attributes(hist, cg_hist, bin_size):
+    basin_boundaries, basin_areas = partition(cg_hist)
+    scaled_basins, basins_scaled = boundaries_mask(hist, basin_boundaries, bin_size)
+
+    basins = OrderedDict()
     num_center = 1
-    for center in centers:
-        relative_area = float(len(areas[center]))/sum(areas.values())
+    total_area = sum(basin_areas.values())
+    total_weight = cg_hist[np.where(cg_hist != 0)].sum()
+
+    for center in basin_boundaries:
+        area_indices = np.array(basin_boundaries[center])
+        relative_area = basin_areas[center] / float(total_area)
+        relative_weight = cg_hist[area_indices[:, 0], area_indices[:, 1]].sum() / total_weight
+
+        # Build the `Basin` object using the information we've determined.
         basins[num_center] = Basin(center=center,
-                                   indices=centers[center],
-                                   area=len(areas[center]),
+                                   indices=basin_boundaries[center],
                                    relative_area=relative_area,
-                                   weight=None)
+                                   relative_weight=relative_weight)
+
         num_center += 1
     return basins
