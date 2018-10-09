@@ -11,7 +11,7 @@ __all__ = 'tiled_grid,coarse_grain_hist,determine_histogram_directions,partition
 
 # A lightweight read-only data structure to save and access basin information for a given
 # simulation.
-Basin = namedtuple('Basin', 'center indices relative_area relative_weight')
+Basin = namedtuple('Basin', 'center rotated_center indices raw_indices relative_area relative_weight')
 
 
 # Define the directions for a 3 x 3 square which we'll use to determine
@@ -259,13 +259,14 @@ def determine_histogram_directions(histogram):
     return array_directions, u, v
 
 
-def boundaries_mask(histogram, basin_boundaries, bin_size):
+def boundaries_mask(histogram, cg_basin_boundaries, bin_size):
     """Given an input 2D histogram and its basin boundaries obtained by coarse-graining the histogram,
     extract the corresponding indices to the original histogram.
 
         :param histogram: (2D array) The original 2D histogram.
-        :param basin_boundaries: (OrderedDict) The basin boundaries (key: index, value: a list of 2D cartesian points)
-                                  obtained from a coarse-grained representation of the original histogram.
+        :param cg_basin_boundaries: (OrderedDict) The caorse-grained basin boundaries (key: index, value: a list of 2D
+                                    cartesian points) obtained from a coarse-grained representation of the original
+                                    histogram.
         :param bin_size: (real) The bin_size used to generate the original histogram.
         :return scaled_basins, basins_scaled: (OrderedDict, OrderedDict) A dictionary where the keys are basin numbers
                                               and the values are the coordinates. And, a dictionary where the
@@ -281,9 +282,10 @@ def boundaries_mask(histogram, basin_boundaries, bin_size):
     scaled_basins = OrderedDict()  # this is for the basins by the points
     basins_scaled = OrderedDict()  # this is for the points by the basins
 
-    # the idea here is to use the scaled basins to quickly determine
-    for basin in basin_boundaries:
-        basin_boundary = basin_boundaries[basin]
+    # The idea here is to use the scaled basins to quickly determine which points in the original
+    # histogram correspond to those in the coarse-grained histogram.
+    for basin in cg_basin_boundaries:
+        basin_boundary = cg_basin_boundaries[basin]
         scaled_basins[basin] = list()
 
         for x, y in basin_boundary:
@@ -404,7 +406,7 @@ def determine_basin_attributes(raw_hist, pmf_hist, cg_hist):
             total_weight += raw_hist[x, y]
             total_area += 1
 
-    # Now, populate the corresponding basin attributes: center, indices, relative area, relative weight
+    # Now, populate the corresponding basin attributes: center, indices, relative area, relative weight.
     basins = OrderedDict()
     total_area = sum(cg_basin_areas.values())
     running_total = 0
@@ -415,8 +417,12 @@ def determine_basin_attributes(raw_hist, pmf_hist, cg_hist):
         relative_weight = raw_hist[area_indices[:, 0], area_indices[:, 1]].sum() / float(total_weight)
 
         # Build the `Basin` object using the information we've determined.
+        # Of particular note: `rotated_center` is the index of the center if the histogram has been
+        # rotated 90 degrees (i.e. `np.rot90`). The -1 is due to the shape not being zero-indexed.
         basins[num_center] = Basin(center=basin_center,
+                                   rotated_center=(basin_center[0], cg_hist.shape[1] - basin_center[1] - 1),
                                    indices=cg_basin_boundaries[basin_center],
+                                   raw_indices=area_indices,
                                    relative_area=relative_area,
                                    relative_weight=relative_weight)
         running_total += relative_weight
