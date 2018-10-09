@@ -271,10 +271,10 @@ def boundaries_mask(histogram, basin_boundaries, bin_size):
                                               and the values are the coordinates. And, a dictionary where the
                                               coordinates are the keys, and the values are the basin numbers.
     """
-    indices = np.arange(0, histogram.shape[0])
+    indices = np.arange(0, histogram.shape[0], dtype=int)
     stride = int(10 / bin_size)
     boundaries = indices[::stride]  # every `stride` items
-    scaled_boundaries = boundaries / stride
+    scaled_boundaries = (boundaries / stride).tolist()  # convert to a list for simplicity
 
     # Since the boundaries are just scaled by the stride, we can go through the basin boundaries
     # to populate the indices for the
@@ -314,8 +314,8 @@ def partition(cg_hist):
     x_dim, y_dim = cg_hist.shape
     array_directions, u, v = determine_histogram_directions(cg_hist)
 
-    basin_boundaries = OrderedDict()
-    basin_areas = OrderedDict()
+    cg_basin_boundaries = OrderedDict()
+    cg_basin_areas = OrderedDict()
     for x in range(0, array_directions.shape[0]):
         for y in range(0, array_directions.shape[0]):
             if array_directions[x, y] not in [-1, 0]:
@@ -353,34 +353,72 @@ def partition(cg_hist):
                 # we simplify the found indices using a set.
                 center = line[-1]
 
-                if center not in basin_boundaries:
-                    basin_boundaries[center] = list(set(line))
+                if center not in cg_basin_boundaries:
+                    cg_basin_boundaries[center] = list(set(line))
                 else:
-                    basin_boundaries[center] += line
-                    basin_boundaries[center] = list(set(basin_boundaries[center]))
-                basin_areas[center] = len(basin_boundaries[center])
-    return basin_boundaries, basin_areas
+                    cg_basin_boundaries[center] += line
+                    cg_basin_boundaries[center] = list(set(cg_basin_boundaries[center]))
+                cg_basin_areas[center] = len(cg_basin_boundaries[center])
+    return cg_basin_boundaries, cg_basin_areas
 
 
-def determine_basin_attributes(hist, cg_hist, bin_size):
-    basin_boundaries, basin_areas = partition(cg_hist)
-    scaled_basins, basins_scaled = boundaries_mask(hist, basin_boundaries, bin_size)
+def determine_basin_attributes(raw_hist, pmf_hist, cg_hist):
+    """This function determines the basin attributes: centers, indices, relative areas, and relative weights
+    from the raw histogram (i.e. no PMF applied), the PMF applied histogram, and the coarse-grained histogram.
 
+    This is done by coarse-graining the histogram to determine the relative basins, and their areas. Since this
+    also screens away the minor basins, the total weight will always be less than or equal to the `raw_hist`. Using
+    this mask we can then determine the basin attributes.
+
+        :param raw_hist: (2D array) The original array with no PMF applied - i.e. just raw counts.
+        :param pmf_hist: (2D array) The PMF applied histogram.
+        :param cg_hist: (2D array) The coarse-grained histogram. This has dimensions of `raw_hist.shape` / `scale`.
+        :return basins: (OrderedDict) An OrderedDict containing the basins identified by number, associated with
+                        its corresponding attributes: centers, indices, relative areas and relative weights.
+    """
+    # For the `raw_hist` this value is actually the number of steps - e.g. 3.5M x 50 sims = 175K (at every 10K).
+    # However, since we're using the mask to populate the basins, this number will be less than or equal to
+    # that value (175K in our example).
+    stride = pmf_hist.shape[0]//cg_hist.shape[0]
+    bin_size = 10.0/stride
+    total_area = 0
+    total_weight = 0
+    basin_counts = OrderedDict()
+
+    # Find the basin boundaries through partitioning.
+    cg_basin_boundaries, cg_basin_areas = partition(cg_hist)
+    scaled_basins, basins_scaled = boundaries_mask(raw_hist, cg_basin_boundaries, bin_size)
+
+    # Find the values of the pixels within the basins.
+    for basin in scaled_basins:
+        basin_counts[basin] = list()
+
+    # Determine the occupied cells of the raw histogram.
+    occupied_x, occupied_y = np.where(raw_hist != 0.0)
+    
+    # Now, determine which basins these belong to and save their counts / values.
+    for x, y in zip(occupied_x, occupied_y):
+        if (x, y) in basins_scaled:
+            basin = basins_scaled[(x, y)]
+            basin_counts[basin].append(raw_hist[x, y])
+            total_weight += raw_hist[x, y]
+            total_area += 1
+
+    # Now, populate the corresponding basin attributes: center, indices, relative area, relative weight
     basins = OrderedDict()
+    total_area = sum(cg_basin_areas.values())
+    running_total = 0
     num_center = 1
-    total_area = sum(basin_areas.values())
-    total_weight = cg_hist[np.where(cg_hist != 0)].sum()
-
-    for center in basin_boundaries:
-        area_indices = np.array(basin_boundaries[center])
-        relative_area = basin_areas[center] / float(total_area)
-        relative_weight = cg_hist[area_indices[:, 0], area_indices[:, 1]].sum() / total_weight
+    for basin_center in basin_counts:
+        area_indices = np.array(scaled_basins[basin_center])
+        relative_area = len(area_indices) / float(total_area)
+        relative_weight = raw_hist[area_indices[:, 0], area_indices[:, 1]].sum() / float(total_weight)
 
         # Build the `Basin` object using the information we've determined.
-        basins[num_center] = Basin(center=center,
-                                   indices=basin_boundaries[center],
+        basins[num_center] = Basin(center=basin_center,
+                                   indices=cg_basin_boundaries[basin_center],
                                    relative_area=relative_area,
                                    relative_weight=relative_weight)
-
+        running_total += relative_weight
         num_center += 1
     return basins
