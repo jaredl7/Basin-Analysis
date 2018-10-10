@@ -43,12 +43,17 @@ def check(**kwargs):
         :return: None
     """
     for key, value in kwargs.items():
-        if key == 'stride':
-            if type(value) is not int:
-                raise RuntimeError('The `stride` must be an integer.')
+        if key == 'cg_stride':
+            if type(value) not in [int, tuple, list]:
+                raise RuntimeError('The `cg_stride` must be an integer, or a tuple / list of size 2.')
             else:
-                if value < 1:
-                    raise RuntimeError('The `stride` must be a positive non-zero number.')
+                if type(value) in [tuple, list] and len(value) != 2:
+                    raise RuntimeError('If `cg_stride` is a tuple / list, its length must be 2.')
+                elif type(value) in [tuple, list] and type(value[0]) != int and type(value[1]) != int:
+                    raise RuntimeError('The dimensions of the `cg_stride` must contain integers.')
+                elif type(value) is int:
+                    if value < 1:
+                        raise RuntimeError('The `cg_stride` must be a positive non-zero number.')
         elif key == 'acceptance_threshold':
             if type(value) is not float:
                 raise RuntimeError('The `acceptance_threshold` must be a float or an integer.')
@@ -122,9 +127,10 @@ def tiled_grid(array, size=3):
     return np.concatenate((tiled_row, tiled_row, tiled_row), axis=0)
 
 
-def coarse_grain_hist(hist, stride=4, acceptance_threshold=0.25, sentinel_value=1):
+def coarse_grain_hist(hist, cg_stride, acceptance_threshold=0.25, sentinel_value=1):
     """Coarse-grain the histogram by creating a sub-histogram where each cell is the average of
-    subarrays of size `stride**2`. The intended purpose of this function is to clean up any spurious and
+    subarrays of size `cg_stride**2` (if `cg_stride` is an int), or `cg_stride[0] * cg_stride[1]` if the `cg_stride`
+    is a tuple / list of size 2. The intended purpose of this function is to clean up any spurious and
     sparse cells in the input histogram by only accepting subarrays which are at least filled by a certain
     percentage (i.e. `acceptance_threshold`).
 
@@ -132,29 +138,41 @@ def coarse_grain_hist(hist, stride=4, acceptance_threshold=0.25, sentinel_value=
     analysis / display (e.g. in a quiver plot, regular plot, etc.).
 
         :param hist: (2D array) The input 2D histogram whose coarse-grained mask will be determined.
-        :param stride: (int) The amount of cells along each axis that comprise the sub-array. Default value = 4.
-        :param acceptance_threshold: (real) The minimum percentage of a subarray of size `stride` x `stride`
+        :param cg_stride: (int, tuple, list) This determines the size of the coarse-graining subarray. Valid options are
+                                             an integer, or a tuple / list of size 2 that contains integers which
+                                             corresponds to the x and y strides, respectively.
+        :param acceptance_threshold: (real) The minimum percentage of a subarray of size `cg_stride` ** 2 (if
+                                            `cg_stride` is an integer, or `cg_stride[0] * cg_stride[1]` if `cg_stride`
+                                            is a tuple / list of size 2. Default value = 0.25.
                                      that must be filled. Otherwise, these subarrays are ignored. If this
                                      value is too low, more spurious and minor basins appear. Default value = 0.25.
         :param sentinel_value: (int) The value to use when removing spurious values. Useful if the input
                                histogram is not logarithmic. Default value = 1.
         :return (cg_hist, masked_hist): (2D array, 2D array) The coarse-grained and "masked" histograms.
     """
-    check(stride=stride, acceptance_threshold=acceptance_threshold, sentinel_value=sentinel_value)
+    check(cg_stride=cg_stride, acceptance_threshold=acceptance_threshold, sentinel_value=sentinel_value)
+    x_stride = copy(cg_stride)
+    y_stride = copy(cg_stride)
+    if type(cg_stride) in [tuple, list]:
+        x_stride, y_stride = cg_stride
 
-    indices = np.arange(0, hist.shape[0]).tolist()
-    boundaries = indices[::stride]
-    threshold = int(np.floor((1 - acceptance_threshold)*stride**2))
+    x_indices = np.arange(0, hist.shape[0], dtype=int).tolist()
+    y_indices = np.arange(0, hist.shape[1], dtype=int).tolist()
+    x_boundaries = x_indices[::x_stride]
+    y_boundaries = y_indices[::y_stride]
 
-    cg_dim = hist.shape[0]//stride
-    cg_hist = np.zeros(shape=(cg_dim, cg_dim))
+    threshold = int(np.floor((1 - acceptance_threshold) * x_stride * y_stride))
+
+    cg_dimx = hist.shape[0] // x_stride
+    cg_dimy = hist.shape[1] // y_stride
+    cg_hist = np.zeros(shape=(cg_dimx, cg_dimy), dtype=float)
     masked_hist = np.zeros_like(hist)
 
-    for i_index, i in enumerate(boundaries):
-        for j_index, j in enumerate(boundaries):
+    for i_index, i in enumerate(x_boundaries):
+        for j_index, j in enumerate(y_boundaries):
             # update our indices
-            new_i = i + stride
-            new_j = j + stride
+            new_i = i + x_stride
+            new_j = j + y_stride
 
             # Create a subset of the histogram that conforms to the chosen
             # stride.
@@ -175,9 +193,9 @@ def coarse_grain_hist(hist, stride=4, acceptance_threshold=0.25, sentinel_value=
             chunk[np.where(chunk == sentinel_value)] = 0
 
             # Finally, we exclude any chunks which do not meet our
-            # desired occupancy threshold. For e.g. if using a stride of 4,
-            # the chunk area will be 16. If we want to exclude chunks that are
-            # less than 25% occupied (which will clean up the grid), the number
+            # desired occupancy threshold. For e.g. if using a coarse-grained stride of 4
+            # for both dimensions, the chunk area will be 16. If we want to exclude chunks
+            # that are less than 25% occupied (which will clean up the grid), the number
             # of found zeroes will be 12. Any chunk that meets this criterion will
             # be excluded.
             if len(find_spurious) <= threshold:
@@ -226,16 +244,20 @@ def determine_histogram_directions(histogram):
                                         vector 2D grids.
     """
     tiled_hist = tiled_grid(histogram)
-    start = histogram.shape[0] - 1
-    end = histogram.shape[0] * 2 + 1
-    extended_hist = tiled_hist[start:end, start:end]
-    indices = np.arange(0, extended_hist.shape[0])
+    x_start = histogram.shape[0] - 1
+    x_end = histogram.shape[0] * 2 + 1
+    y_start = histogram.shape[1] - 1
+    y_end = histogram.shape[1] * 2 + 1
+    extended_hist = tiled_hist[x_start:x_end, y_start:y_end]
 
-    array_directions = np.zeros(histogram.shape).astype('int')
-    u = np.zeros(histogram.shape).astype('int')
-    v = np.zeros(histogram.shape).astype('int')
-    for i in indices[:-2]:
-        for j in indices[:-2]:
+    x_indices = np.arange(0, extended_hist.shape[0], dtype=int)
+    y_indices = np.arange(0, extended_hist.shape[1], dtype=int)
+
+    array_directions = np.zeros(histogram.shape, dtype=int)
+    u = np.zeros(histogram.shape, dtype=int)
+    v = np.zeros(histogram.shape, dtype=int)
+    for i in x_indices[:-2]:
+        for j in y_indices[:-2]:
             # We use a size of 3 since we're only looking at a 3 x 3
             # subarray of the extended array. This is because we want
             # to determine the gradient of steepest descent local to
@@ -259,7 +281,7 @@ def determine_histogram_directions(histogram):
     return array_directions, u, v
 
 
-def boundaries_mask(histogram, cg_basin_boundaries, bin_size):
+def boundaries_mask(histogram, cg_basin_boundaries, cg_stride):
     """Given an input 2D histogram and its basin boundaries obtained by coarse-graining the histogram,
     extract the corresponding indices to the original histogram.
 
@@ -267,18 +289,29 @@ def boundaries_mask(histogram, cg_basin_boundaries, bin_size):
         :param cg_basin_boundaries: (OrderedDict) The caorse-grained basin boundaries (key: index, value: a list of 2D
                                     cartesian points) obtained from a coarse-grained representation of the original
                                     histogram.
-        :param bin_size: (real) The bin_size used to generate the original histogram.
+        :param cg_stride: (int, tuple, list) This determines the size of the coarse-graining subarray. Valid options are
+                                             an integer, or a tuple / list of size 2 that contains integers which
+                                             corresponds to the x and y strides, respectively.
         :return scaled_basins, basins_scaled: (OrderedDict, OrderedDict) A dictionary where the keys are basin numbers
                                               and the values are the coordinates. And, a dictionary where the
                                               coordinates are the keys, and the values are the basin numbers.
     """
-    indices = np.arange(0, histogram.shape[0], dtype=int)
-    stride = int(10 / bin_size)
-    boundaries = indices[::stride]  # every `stride` items
-    scaled_boundaries = (boundaries / stride).tolist()  # convert to a list for simplicity
+    check(cg_stride=cg_stride)
+    x_stride = copy(cg_stride)
+    y_stride = copy(cg_stride)
+    if type(cg_stride) in [tuple, list]:
+        x_stride, y_stride = cg_stride
+
+    # Convert the indices to a list for simplicity
+    x_indices = np.arange(0, histogram.shape[0], dtype=int)
+    y_indices = np.arange(0, histogram.shape[1], dtype=int)
+    x_boundaries = x_indices[::x_stride]  # every `x_stride` items
+    y_boundaries = y_indices[::y_stride]  # every `y_stride` items
+    x_scaled_boundaries = (x_boundaries / x_stride).tolist()
+    y_scaled_boundaries = (y_boundaries / y_stride).tolist()
 
     # Since the boundaries are just scaled by the stride, we can go through the basin boundaries
-    # to populate the indices for the
+    # to populate the indices for the centers.
     scaled_basins = OrderedDict()  # this is for the basins by the points
     basins_scaled = OrderedDict()  # this is for the points by the basins
 
@@ -289,13 +322,13 @@ def boundaries_mask(histogram, cg_basin_boundaries, bin_size):
         scaled_basins[basin] = list()
 
         for x, y in basin_boundary:
-            i = scaled_boundaries.index(x)
-            j = scaled_boundaries.index(y)
+            i = x_scaled_boundaries.index(x)
+            j = y_scaled_boundaries.index(y)
 
             # Obtain the indices for the original array that were "hidden" by the `stride`.
             # This gets the "scaled" x and y coordinates.
-            sbi = np.array(([boundaries[i]] * stride) + np.arange(0, stride, 1)).tolist()
-            sbj = np.array(([boundaries[j]] * stride) + np.arange(0, stride, 1)).tolist()
+            sbi = np.array(([x_boundaries[i]] * x_stride) + np.arange(0, x_stride, 1), dtype=int).tolist()
+            sbj = np.array(([y_boundaries[j]] * y_stride) + np.arange(0, y_stride, 1), dtype=int).tolist()
 
             # Now save the adjusted coordinates.
             for si, sj in product(sbi, sbj):
@@ -319,7 +352,7 @@ def partition(cg_hist):
     cg_basin_boundaries = OrderedDict()
     cg_basin_areas = OrderedDict()
     for x in range(0, array_directions.shape[0]):
-        for y in range(0, array_directions.shape[0]):
+        for y in range(0, array_directions.shape[1]):
             if array_directions[x, y] not in [-1, 0]:
                 xx = copy(x)
                 yy = copy(y)
@@ -381,15 +414,16 @@ def determine_basin_attributes(raw_hist, pmf_hist, cg_hist):
     # For the `raw_hist` this value is actually the number of steps - e.g. 3.5M x 50 sims = 175K (at every 10K).
     # However, since we're using the mask to populate the basins, this number will be less than or equal to
     # that value (175K in our example).
-    stride = pmf_hist.shape[0]//cg_hist.shape[0]
-    bin_size = 10.0/stride
+    x_stride = pmf_hist.shape[0] // cg_hist.shape[0]
+    y_stride = pmf_hist.shape[1] // cg_hist.shape[1]
+    cg_stride = (x_stride, y_stride)
     total_area = 0
     total_weight = 0
     basin_counts = OrderedDict()
 
     # Find the basin boundaries through partitioning.
     cg_basin_boundaries, cg_basin_areas = partition(cg_hist)
-    scaled_basins, basins_scaled = boundaries_mask(raw_hist, cg_basin_boundaries, bin_size)
+    scaled_basins, basins_scaled = boundaries_mask(raw_hist, cg_basin_boundaries, cg_stride)
 
     # Find the values of the pixels within the basins.
     for basin in scaled_basins:
