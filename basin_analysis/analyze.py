@@ -201,7 +201,7 @@ def coarse_grain_hist(hist, cg_stride, acceptance_threshold=0.25, sentinel_value
             # of found zeroes will be 12. Any chunk that meets this criterion will
             # be excluded.
             if len(find_spurious) <= threshold:
-                cg_hist[i_index, j_index] = chunk.mean()
+                cg_hist[i_index, j_index] = np.nanmean(chunk)
                 masked_hist[i:new_i, j:new_j] = hist[i:new_i, j:new_j]
     return cg_hist, masked_hist
 
@@ -278,14 +278,17 @@ def determine_histogram_directions(histogram, periodic_boundary=True):
             new_i = i + 3
             new_j = j + 3
 
-            # Create our chunk, and then determine where the location
-            # of the lowest value is located.
+            # Create our 3 x 3 chunk, and then determine where the location
+            # of the lowest value is located relative to the center.
             chunk = extended_hist[i:new_i, j:new_j]
-            locs = np.where(chunk == np.nanmin(chunk))
+            x_min_locs, y_min_locs = np.where(chunk == np.nanmin(chunk))
 
-            # We only check chunks whose center index is non-zero.
-            if chunk[1, 1] != 0.0:
-                for x, y in zip(locs[0], locs[1]):
+            # We only check chunks whose center index (i.e. [1, 1]) is non-zero.
+            # Since some of the chunks will contain NaNs, to check that the current element (the center, or [1, 1])
+            # is valid, we determine its mean - which for an array of 1 value is always itself. And, since these
+            # have a PMF applied, valid values are always < 0.
+            if np.nanmean([chunk[1, 1]]) < 0.0:
+                for x, y in zip(x_min_locs, y_min_locs):
                     # Determine the directions based on the coordinate of the smallest
                     # element relative to the center (i.e. the current element).
                     coords = (x, y)
@@ -461,13 +464,13 @@ def determine_basin_attributes(raw_hist, pmf_hist, cg_hist, periodic_boundary=Tr
 
     # Now, populate the corresponding basin attributes: center, indices, relative area, relative weight.
     basins = OrderedDict()
-    total_area = sum(cg_basin_areas.values())
+    total_area = np.nansum(list(cg_basin_areas.values()))
     running_total = 0
     num_center = 1
     for basin_center in basin_counts:
         area_indices = np.array(scaled_basins[basin_center])
         relative_area = len(area_indices) / float(total_area)
-        relative_weight = raw_hist[area_indices[:, 0], area_indices[:, 1]].sum() / float(total_weight)
+        relative_weight = np.nansum(raw_hist[area_indices[:, 0], area_indices[:, 1]]) / float(total_weight)
 
         # Build the `Basin` object using the information we've determined.
         # Of particular note: `rotated_center` is the index of the center if the histogram has been
