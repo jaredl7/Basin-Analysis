@@ -21,15 +21,15 @@ Basin = namedtuple('Basin', 'center rotated_center indices raw_indices relative_
 # 4 5 6     ML CC MR
 # 7 8 9     LL LM LR
 directions = OrderedDict()
-directions[(0, 0)] = 1  # upper-left
-directions[(0, 1)] = 2  # upper-middle
-directions[(0, 2)] = 3  # upper-right
-directions[(1, 0)] = 4  # middle-left
-directions[(1, 1)] = 5  # center square
-directions[(1, 2)] = 6  # middle-right
-directions[(2, 0)] = 7  # lower-left
-directions[(2, 1)] = 8  # lower-middle
-directions[(2, 2)] = 9  # lower-right
+directions[(0, 0)] = 1  # upper-left    (UL)
+directions[(0, 1)] = 2  # upper-middle  (UM)
+directions[(0, 2)] = 3  # upper-right   (UR)
+directions[(1, 0)] = 4  # middle-left   (ML)
+directions[(1, 1)] = 5  # center square (CC)
+directions[(1, 2)] = 6  # middle-right  (MR)
+directions[(2, 0)] = 7  # lower-left    (LL)
+directions[(2, 1)] = 8  # lower-middle  (LM)
+directions[(2, 2)] = 9  # lower-right   (LR)
 
 
 def check(**kwargs):
@@ -161,8 +161,10 @@ def coarse_grain_hist(hist, cg_stride, acceptance_threshold=0.25, sentinel_value
     x_boundaries = x_indices[::x_stride]
     y_boundaries = y_indices[::y_stride]
 
+    # The threshold as an integer - this will be used to determine the number of occupied spurious cells.
     threshold = int(np.floor((1 - acceptance_threshold) * x_stride * y_stride))
 
+    # Create the coarse-grained and masked histograms
     cg_dimx = hist.shape[0] // x_stride
     cg_dimy = hist.shape[1] // y_stride
     cg_hist = np.zeros(shape=(cg_dimx, cg_dimy), dtype=float)
@@ -204,7 +206,7 @@ def coarse_grain_hist(hist, cg_stride, acceptance_threshold=0.25, sentinel_value
     return cg_hist, masked_hist
 
 
-def determine_histogram_directions(histogram):
+def determine_histogram_directions(histogram, periodic_boundary=True):
     """Given an input histogram, determine the gradients of steepest descent and their associated vectors. This
     is intended for use on a coarse-grained histogram, however any histogram can be used.
 
@@ -240,6 +242,7 @@ def determine_histogram_directions(histogram):
     the histogram, from which we compare the values of the other 8 directions to determine the gradients.
 
         :param histogram: (2D array) The input 2D histogram.
+        :param periodic_boundary: (bool) Whether or not to consider periodic boundary conditions. Default = True.
         :return array_directions, u, v: (2D array, 2D array, 2D array) The array directions, and the u and v
                                         vector 2D grids.
     """
@@ -249,6 +252,16 @@ def determine_histogram_directions(histogram):
     y_start = histogram.shape[1] - 1
     y_end = histogram.shape[1] * 2 + 1
     extended_hist = tiled_hist[x_start:x_end, y_start:y_end]
+
+    # The extended histogram was created so that for periodic boundaries every cell would be visited (due to the 3 x 3
+    # sub-array). However, to utilize the same algorithm for non-periodic boundaries we simply have to set the extended
+    # regions (i.e. the first and last columns and rows) to 0. Doing so would create an artificial cutoff, but will also
+    # allow for the segments to be determined individually with the current algorithm.
+    if not periodic_boundary:
+        extended_hist[0, :] = 0  # first row
+        extended_hist[-1, :] = 0  # last row
+        extended_hist[:, 0] = 0  # first column
+        extended_hist[:, -1] = 0  # last column
 
     x_indices = np.arange(0, extended_hist.shape[0], dtype=int)
     y_indices = np.arange(0, extended_hist.shape[1], dtype=int)
@@ -325,8 +338,11 @@ def boundaries_mask(histogram, cg_basin_boundaries, cg_stride):
             i = x_scaled_boundaries.index(x)
             j = y_scaled_boundaries.index(y)
 
-            # Obtain the indices for the original array that were "hidden" by the `stride`.
-            # This gets the "scaled" x and y coordinates.
+            # Obtain the indices for the original array that were "hidden" by the `stride` and keep them.
+            # This gets the "scaled" x and y coordinates. For example, if the stride is 4, the `x_indices` would be
+            # `0, 4, 8, ...`. Therefore, the "hidden" indices would be those between the indices - e.g.
+            # `1,2,3,5,6,7,...`. These indices are then added to the original "stride" indices to ensure that we
+            # capture all the coordinates.
             sbi = np.array(([x_boundaries[i]] * x_stride) + np.arange(0, x_stride, 1), dtype=int).tolist()
             sbj = np.array(([y_boundaries[j]] * y_stride) + np.arange(0, y_stride, 1), dtype=int).tolist()
 
@@ -338,16 +354,17 @@ def boundaries_mask(histogram, cg_basin_boundaries, cg_stride):
     return scaled_basins, basins_scaled
 
 
-def partition(cg_hist):
+def partition(cg_hist, periodic_boundary=True):
     """This function segments a coarse-grained histogram by gradients of steepest descent. Basin centers, or regions of
     local minima, define basin centers, whose envelopes, relative areas and weights are determined.
 
         :param cg_hist: (2D array) The coarse-grained array.
+        :param periodic_boundary: (bool) Whether or not to consider periodic boundary conditions. Default = True.
         :return: (OrderedDict) An OrderedDict whose key is the basin number and value is the basin information stored
                   as a namedtuple.
     """
     x_dim, y_dim = cg_hist.shape
-    array_directions, u, v = determine_histogram_directions(cg_hist)
+    array_directions, u, v = determine_histogram_directions(cg_hist, periodic_boundary)
 
     cg_basin_boundaries = OrderedDict()
     cg_basin_areas = OrderedDict()
@@ -358,6 +375,7 @@ def partition(cg_hist):
                 yy = copy(y)
                 line = list()
                 found_center = False
+
                 # This loop will search for a basin center by following
                 # the available lines.
                 line.append((xx, yy))  # start at the current point
@@ -397,7 +415,7 @@ def partition(cg_hist):
     return cg_basin_boundaries, cg_basin_areas
 
 
-def determine_basin_attributes(raw_hist, pmf_hist, cg_hist):
+def determine_basin_attributes(raw_hist, pmf_hist, cg_hist, periodic_boundary=True):
     """This function determines the basin attributes: centers, indices, relative areas, and relative weights
     from the raw histogram (i.e. no PMF applied), the PMF applied histogram, and the coarse-grained histogram.
 
@@ -408,12 +426,13 @@ def determine_basin_attributes(raw_hist, pmf_hist, cg_hist):
         :param raw_hist: (2D array) The original array with no PMF applied - i.e. just raw counts.
         :param pmf_hist: (2D array) The PMF applied histogram.
         :param cg_hist: (2D array) The coarse-grained histogram. This has dimensions of `raw_hist.shape` / `scale`.
+        :param periodic_boundary: (bool) Whether or not to consider periodic boundary conditions. Default = True.
         :return basins: (OrderedDict) An OrderedDict containing the basins identified by number, associated with
                         its corresponding attributes: centers, indices, relative areas and relative weights.
     """
-    # For the `raw_hist` this value is actually the number of steps - e.g. 3.5M x 50 sims = 175K (at every 10K).
+    # For the `raw_hist` the total weight is actually the number of steps - e.g. 3.5M x 50 sims = 175K (at every 10K).
     # However, since we're using the mask to populate the basins, this number will be less than or equal to
-    # that value (175K in our example).
+    # that value (175K in our example) since the histogram will be screened / masked.
     x_stride = pmf_hist.shape[0] // cg_hist.shape[0]
     y_stride = pmf_hist.shape[1] // cg_hist.shape[1]
     cg_stride = (x_stride, y_stride)
@@ -422,7 +441,7 @@ def determine_basin_attributes(raw_hist, pmf_hist, cg_hist):
     basin_counts = OrderedDict()
 
     # Find the basin boundaries through partitioning.
-    cg_basin_boundaries, cg_basin_areas = partition(cg_hist)
+    cg_basin_boundaries, cg_basin_areas = partition(cg_hist, periodic_boundary)
     scaled_basins, basins_scaled = boundaries_mask(raw_hist, cg_basin_boundaries, cg_stride)
 
     # Find the values of the pixels within the basins.
