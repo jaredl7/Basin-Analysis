@@ -36,6 +36,18 @@ directions[(2, 2)] = 9  # lower-right   (LR)
 # This defines a look-up table so as to quickly determine the corresponding
 # `u` and `v` vectors to a given direction (1 - 9) as defined above so that
 # a quiver plot can be easily generated.
+#
+# Note that the representation of the quiver vectors is implemented this
+# way since the array has to be rotated 90 degrees before plotting. All the
+# directions here are all relative to the center (5), where they point inward
+# towards it. As such, after modification to match what imshow produces
+# the actual directions are (prior to rotating):
+#
+#     7 4 1     LL ML UL
+#     8 5 2     LM CC UM
+#     9 6 3     LR MR UR
+#
+# The locations of the 5s will eventually be superimposed with an x to mark the peak locations.
 quiver_vectors = OrderedDict()
 quiver_vectors[1] = (-1, -1)    # upper-left    (UL)
 quiver_vectors[2] = (-1, 0)     # upper-middle  (UM)
@@ -77,9 +89,8 @@ def coarse_grain_hist(hist, cg_stride, acceptance_threshold=0.25, sentinel_value
                                              corresponds to the x and y strides, respectively.
         :param acceptance_threshold: (real) The minimum percentage of a subarray of size `cg_stride` ** 2 (if
                                             `cg_stride` is an integer, or `cg_stride[0] * cg_stride[1]` if `cg_stride`
-                                            is a tuple / list of size 2. Default value = 0.25.
-                                     that must be filled. Otherwise, these subarrays are ignored. If this
-                                     value is too low, more spurious and minor basins appear. Default value = 0.25.
+                                            is a tuple / list of size 2. If this value is too low, more spurious and
+                                            minor basins appear. Default value = 0.25.
         :param sentinel_value: (int) The value to use when removing spurious values. Useful if the input
                                histogram is not logarithmic. Default value = 1.
         :return (cg_hist, masked_hist): (2D array, 2D array) The coarse-grained and "masked" histograms.
