@@ -2,6 +2,7 @@ import numpy as np
 from copy import copy
 from itertools import product
 from collections import OrderedDict, namedtuple
+from basin_analysis.utils import check
 
 
 # These are the functions are allowed to be exported. (The others are used internally, and offer no
@@ -32,86 +33,19 @@ directions[(2, 1)] = 8  # lower-middle  (LM)
 directions[(2, 2)] = 9  # lower-right   (LR)
 
 
-def check(**kwargs):
-    """This function is used for checking the arguments of functions and if they're within the
-    ranges and types. In general, most functions will be different, but since some of the
-    functions use similar arguments, it makes sense for a common type and value check to be
-    defined and accessible. Any expected argument not found to be with the right type and value
-    raises a RuntimeError.
-
-        :param kwargs: (dict) The dict of arguments to check.
-        :return: None
-    """
-    for key, value in kwargs.items():
-        if key == 'cg_stride':
-            if type(value) not in [int, tuple, list]:
-                raise RuntimeError('The `cg_stride` must be an integer, or a tuple / list of size 2.')
-            else:
-                if type(value) in [tuple, list] and len(value) != 2:
-                    raise RuntimeError('If `cg_stride` is a tuple / list, its length must be 2.')
-                elif type(value) in [tuple, list] and type(value[0]) != int and type(value[1]) != int:
-                    raise RuntimeError('The dimensions of the `cg_stride` must contain integers.')
-                elif type(value) is int:
-                    if value < 1:
-                        raise RuntimeError('The `cg_stride` must be a positive non-zero number.')
-        elif key == 'acceptance_threshold':
-            if type(value) is not float:
-                raise RuntimeError('The `acceptance_threshold` must be a float or an integer.')
-            else:
-                if value > 1:
-                    raise RuntimeError('The `acceptance_threshold` must be <= 1.0.')
-        elif key == 'sentinel_value':
-            if type(value) not in [float, int]:
-                raise RuntimeError('The `sentinel_value` must be a float or an integer.')
-
-
-def determine_direction(direction):
-    """This function uses the directions defined to calculate the vector directions which
-    will be used to create a quiver plot. By itself, this is relatively straightforward.
-    However, due to how imshow plots data (i.e. 0 is in the top-left corner), and since
-    this is the same format used to generate all subsequent Ramachandran plots, it's
-    imperative the quiver plot matches that order, hence these vector magnitudes.
-
-    The idea here is that the directions here are all relative to the center (5), where they
-    point inward towards it. As such, after modification to match what imshow produces
-    the actual directions are:
-
-        7 4 1
-        8 5 2
-        9 6 3
-
-    The locations of the 5s will eventually be superimposed with an x to mark the peak locations.
-
-        :param direction: (int) An integer within the values 1 - 9 that will be used to determine
-                          the corresponding directional vectors to generate a quiver plot and
-                          determine the gradients of steepest descent.
-
-        :return u, v: (int, int) A tuple of the directional vectors corresponding to the input
-                      direction.
-    """
-    u = 0
-    v = 0
-    if direction == 1:
-        u = -1
-        v = -1
-    elif direction == 2:
-        u = -1
-    elif direction == 3:
-        u = -1
-        v = 1
-    elif direction == 4:
-        v = -1
-    elif direction == 6:
-        v = 1
-    elif direction == 7:
-        u = 1
-        v = -1
-    elif direction == 8:
-        u = 1
-    elif direction == 9:
-        u = 1
-        v = 1
-    return u, v
+# This defines a look-up table so as to quickly determine the corresponding
+# `u` and `v` vectors to a given direction (1 - 9) as defined above so that
+# a quiver plot can be easily generated.
+quiver_vectors = OrderedDict()
+quiver_vectors[1] = (-1, -1)    # upper-left    (UL)
+quiver_vectors[2] = (-1, 0)     # upper-middle  (UM)
+quiver_vectors[3] = (-1, 1)     # upper-right   (UR)
+quiver_vectors[4] = (0, -1)     # middle-left   (ML)
+quiver_vectors[5] = (0, 0)      # center square (CC)
+quiver_vectors[6] = (0, 1)      # middle-right  (MR)
+quiver_vectors[7] = (1, -1)     # lower-left    (LL)
+quiver_vectors[8] = (1, 0)      # lower-middle  (LM)
+quiver_vectors[9] = (1, 1)      # lower-right   (LR)
 
 
 def tiled_grid(array, size=3):
@@ -287,13 +221,13 @@ def determine_histogram_directions(histogram, periodic_boundary=True):
             # Since some of the chunks will contain NaNs, to check that the current element (the center, or [1, 1])
             # is valid, we determine its mean - which for an array of 1 value is always itself. And, since these
             # have a PMF applied, valid values are always < 0.
-            if np.nan_to_num([chunk[1, 1]]) < 0.0:
+            if np.nan_to_num(chunk[1, 1]) < 0.0:
                 for x, y in zip(x_min_locs, y_min_locs):
                     # Determine the directions based on the coordinate of the smallest
                     # element relative to the center (i.e. the current element).
-                    coords = (x, y)
-                    array_directions[i, j] = directions[coords]
-                    u[i, j], v[i, j] = determine_direction(directions[coords])
+                    coordinates = (x, y)
+                    array_directions[i, j] = directions[coordinates]
+                    u[i, j], v[i, j] = quiver_vectors[directions[coordinates]]
     return array_directions, u, v
 
 
@@ -458,7 +392,6 @@ def determine_basin_attributes(raw_hist, pmf_hist, cg_hist, periodic_boundary=Tr
 
     # Now, populate the corresponding basin attributes: center, indices, relative area, relative weight.
     basins = OrderedDict()
-    running_total = 0
     num_center = 1
     for basin_center in scaled_basins:
         area_indices = np.array(scaled_basins[basin_center])
@@ -474,6 +407,5 @@ def determine_basin_attributes(raw_hist, pmf_hist, cg_hist, periodic_boundary=Tr
                                    raw_indices=area_indices,
                                    relative_area=relative_area,
                                    relative_weight=relative_weight)
-        running_total += relative_weight
         num_center += 1
     return basins
