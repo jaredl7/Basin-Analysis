@@ -201,7 +201,7 @@ def coarse_grain_hist(hist, cg_stride, acceptance_threshold=0.25, sentinel_value
             # of found zeroes will be 12. Any chunk that meets this criterion will
             # be excluded.
             if len(find_spurious) <= threshold:
-                cg_hist[i_index, j_index] = np.nanmean(chunk)
+                cg_hist[i_index, j_index] = np.nansum(chunk)/(x_stride * y_stride)
                 masked_hist[i:new_i, j:new_j] = hist[i:new_i, j:new_j]
     return cg_hist, masked_hist
 
@@ -287,7 +287,7 @@ def determine_histogram_directions(histogram, periodic_boundary=True):
             # Since some of the chunks will contain NaNs, to check that the current element (the center, or [1, 1])
             # is valid, we determine its mean - which for an array of 1 value is always itself. And, since these
             # have a PMF applied, valid values are always < 0.
-            if np.nanmean([chunk[1, 1]]) < 0.0:
+            if np.nan_to_num([chunk[1, 1]]) < 0.0:
                 for x, y in zip(x_min_locs, y_min_locs):
                     # Determine the directions based on the coordinate of the smallest
                     # element relative to the center (i.e. the current element).
@@ -346,8 +346,8 @@ def boundaries_mask(histogram, cg_basin_boundaries, cg_stride):
             # `0, 4, 8, ...`. Therefore, the "hidden" indices would be those between the indices - e.g.
             # `1,2,3,5,6,7,...`. These indices are then added to the original "stride" indices to ensure that we
             # capture all the coordinates.
-            sbi = np.array(([x_boundaries[i]] * x_stride) + np.arange(0, x_stride, 1), dtype=int).tolist()
-            sbj = np.array(([y_boundaries[j]] * y_stride) + np.arange(0, y_stride, 1), dtype=int).tolist()
+            sbi = np.array(([x_boundaries[i]] * x_stride) + np.arange(0, x_stride, 1, dtype=int)).tolist()
+            sbj = np.array(([y_boundaries[j]] * y_stride) + np.arange(0, y_stride, 1, dtype=int)).tolist()
 
             # Now save the adjusted coordinates.
             for si, sj in product(sbi, sbj):
@@ -442,6 +442,7 @@ def determine_basin_attributes(raw_hist, pmf_hist, cg_hist, periodic_boundary=Tr
     total_area = 0
     total_weight = 0
     basin_counts = OrderedDict()
+    nonnan_hist = np.nan_to_num(raw_hist)
 
     # Find the basin boundaries through partitioning.
     cg_basin_boundaries, cg_basin_areas = partition(cg_hist, periodic_boundary)
@@ -452,25 +453,25 @@ def determine_basin_attributes(raw_hist, pmf_hist, cg_hist, periodic_boundary=Tr
         basin_counts[basin] = list()
 
     # Determine the occupied cells of the raw histogram.
-    occupied_x, occupied_y = np.where(raw_hist != 0.0)
+    occupied_x, occupied_y = np.where(nonnan_hist != 0.0)
     
     # Now, determine which basins these belong to and save their counts / values.
     for x, y in zip(occupied_x, occupied_y):
         if (x, y) in basins_scaled:
+            ele = nonnan_hist[x, y]
             basin = basins_scaled[(x, y)]
-            basin_counts[basin].append(raw_hist[x, y])
-            total_weight += raw_hist[x, y]
+            basin_counts[basin].append(ele)
+            total_weight += ele
             total_area += 1
 
     # Now, populate the corresponding basin attributes: center, indices, relative area, relative weight.
     basins = OrderedDict()
-    total_area = np.nansum(list(cg_basin_areas.values()))
     running_total = 0
     num_center = 1
     for basin_center in basin_counts:
         area_indices = np.array(scaled_basins[basin_center])
         relative_area = len(area_indices) / float(total_area)
-        relative_weight = np.nansum(raw_hist[area_indices[:, 0], area_indices[:, 1]]) / float(total_weight)
+        relative_weight = nonnan_hist[area_indices[:, 0], area_indices[:, 1]].sum() / float(total_weight)
 
         # Build the `Basin` object using the information we've determined.
         # Of particular note: `rotated_center` is the index of the center if the histogram has been
