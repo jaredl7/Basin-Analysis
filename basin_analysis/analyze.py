@@ -441,16 +441,11 @@ def determine_basin_attributes(raw_hist, pmf_hist, cg_hist, periodic_boundary=Tr
     cg_stride = (x_stride, y_stride)
     total_area = 0
     total_weight = 0
-    basin_counts = OrderedDict()
     nonnan_hist = np.nan_to_num(raw_hist)
 
     # Find the basin boundaries through partitioning.
     cg_basin_boundaries, cg_basin_areas = partition(cg_hist, periodic_boundary)
     scaled_basins, basins_scaled = boundaries_mask(raw_hist, cg_basin_boundaries, cg_stride)
-
-    # Find the values of the pixels within the basins.
-    for basin in scaled_basins:
-        basin_counts[basin] = list()
 
     # Determine the occupied cells of the raw histogram.
     occupied_x, occupied_y = np.where(nonnan_hist != 0.0)
@@ -458,17 +453,14 @@ def determine_basin_attributes(raw_hist, pmf_hist, cg_hist, periodic_boundary=Tr
     # Now, determine which basins these belong to and save their counts / values.
     for x, y in zip(occupied_x, occupied_y):
         if (x, y) in basins_scaled:
-            ele = nonnan_hist[x, y]
-            basin = basins_scaled[(x, y)]
-            basin_counts[basin].append(ele)
-            total_weight += ele
+            total_weight += nonnan_hist[x, y]
             total_area += 1
 
     # Now, populate the corresponding basin attributes: center, indices, relative area, relative weight.
     basins = OrderedDict()
     running_total = 0
     num_center = 1
-    for basin_center in basin_counts:
+    for basin_center in scaled_basins:
         area_indices = np.array(scaled_basins[basin_center])
         relative_area = len(area_indices) / float(total_area)
         relative_weight = nonnan_hist[area_indices[:, 0], area_indices[:, 1]].sum() / float(total_weight)
