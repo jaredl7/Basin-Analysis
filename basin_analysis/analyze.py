@@ -125,19 +125,20 @@ def coarse_grain_hist(hist, cg_stride, acceptance_threshold=0.25, sentinel_value
             # stride.
             chunk = hist[i:new_i, j:new_j]
 
-            # First, we remove all spurious values - i.e. set them to some
-            # sentinel value, and then set those to zero. This is necessary
+            # Find all the spurious values - i.e. all values that are NaN,
+            # or infinite (including negatives). This is necessary
             # if a logarithm has been applied, sometimes `np.nan` and `np.inf`
             # values will appear. These cells shouldn't be discounted, and
             # should be included nonetheless. However, since keeping them at
             # those values in the array would affect the determination of
             # gradients of steepest descent, we reassign them to 0.
-            chunk[np.where(chunk == np.nan)] = sentinel_value
-            chunk[np.where(chunk == -np.nan)] = sentinel_value
-            chunk[np.where(chunk == np.inf)] = sentinel_value
-            chunk[np.where(chunk == -np.inf)] = sentinel_value
-            find_spurious = chunk[np.where(chunk == sentinel_value)]
-            chunk[np.where(chunk == sentinel_value)] = 0
+
+            find_spurious = chunk[np.where(chunk == 0)]
+            # find_spurious = chunk[~np.isfinite(chunk)]
+            # chunk[~np.isfinite(chunk)] = sentinel_value
+            # chunk[np.where(chunk == sentinel_value)] = 0
+
+            #print(333, len(chunk[np.where(chunk == 0)]), len(find_spurious))
 
             # Finally, we exclude any chunks which do not meet our
             # desired occupancy threshold. For e.g. if using a coarse-grained stride of 4
@@ -145,9 +146,21 @@ def coarse_grain_hist(hist, cg_stride, acceptance_threshold=0.25, sentinel_value
             # that are less than 25% occupied (which will clean up the grid), the number
             # of found zeroes will be 12. Any chunk that meets this criterion will
             # be excluded.
+
+
+            # if len(find_spurious) <= threshold:
+            #     print(111, len(find_spurious), threshold)
+            #     print(chunk)
+            #     cg_hist[i_index, j_index] = np.nansum(chunk)/(x_stride * y_stride)
+            #     #masked_hist[i:new_i, j:new_j] = hist[i:new_i, j:new_j]
+            #     masked_hist[i:new_i, j:new_j] = chunk
+            # else:
+            #     print(222, len(find_spurious), np.nansum(chunk)/(x_stride * y_stride))
+            #     print(chunk)
+            #     #cg_hist[i_index, j_index] = np.nansum(chunk) / (x_stride * y_stride)
             if len(find_spurious) <= threshold:
-                cg_hist[i_index, j_index] = np.nansum(chunk)/(x_stride * y_stride)
-                masked_hist[i:new_i, j:new_j] = hist[i:new_i, j:new_j]
+                cg_hist[i_index, j_index] = np.nanmean(chunk)
+                masked_hist[i:new_i, j:new_j] = chunk
     return cg_hist, masked_hist
 
 
