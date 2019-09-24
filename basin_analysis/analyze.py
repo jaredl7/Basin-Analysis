@@ -7,7 +7,7 @@ from basin_analysis.utils import check
 
 # These are the functions are allowed to be exported. (The others are used internally, and offer no
 # tangible benefit external to this solution.)
-__all__ = 'tiled_grid,coarse_grain_hist,determine_histogram_directions,partition,determine_basin_attributes'.split(',')
+__all__ = 'tiled_grid,boundaries_mask,coarse_grain_hist,determine_histogram_directions,partition,determine_basin_attributes'.split(',')
 
 
 # A lightweight read-only data structure to save and access basin information for a given
@@ -260,7 +260,7 @@ def boundaries_mask(histogram, cg_basin_boundaries, cg_stride):
     extract the corresponding indices to the original histogram.
 
         :param histogram: (2D array) The original 2D histogram.
-        :param cg_basin_boundaries: (OrderedDict) The caorse-grained basin boundaries (key: index, value: a list of 2D
+        :param cg_basin_boundaries: (OrderedDict) The coarse-grained basin boundaries (key: index, value: a list of 2D
                                     cartesian points) obtained from a coarse-grained representation of the original
                                     histogram.
         :param cg_stride: (int, tuple, list) This determines the size of the coarse-graining subarray. Valid options are
@@ -281,8 +281,8 @@ def boundaries_mask(histogram, cg_basin_boundaries, cg_stride):
     y_indices = np.arange(0, histogram.shape[1], dtype=int)
     x_boundaries = x_indices[::x_stride]  # every `x_stride` items
     y_boundaries = y_indices[::y_stride]  # every `y_stride` items
-    x_scaled_boundaries = (x_boundaries / x_stride).tolist()
-    y_scaled_boundaries = (y_boundaries / y_stride).tolist()
+    x_scaled_boundaries = (x_boundaries / x_stride).astype(int).tolist()
+    y_scaled_boundaries = (y_boundaries / y_stride).astype(int).tolist()
 
     # Since the boundaries are just scaled by the stride, we can go through the basin boundaries
     # to populate the indices for the centers.
@@ -409,6 +409,7 @@ def determine_basin_attributes(raw_hist, pmf_hist, cg_hist, periodic_boundary=Tr
     occupied_x, occupied_y = np.where(nonnan_hist != 0.0)
     
     # Now, determine which basins these belong to and save their counts / values.
+    # Note: this uses `basins_scaled` as an analogue to `masked_hist`
     for x, y in zip(occupied_x, occupied_y):
         if (x, y) in basins_scaled:
             total_weight += nonnan_hist[x, y]
@@ -419,7 +420,13 @@ def determine_basin_attributes(raw_hist, pmf_hist, cg_hist, periodic_boundary=Tr
     num_center = 1
     for basin_center in scaled_basins:
         area_indices = np.array(scaled_basins[basin_center])
-        relative_area = len(area_indices) / float(total_area)
+
+        # Determine the area occupied by the current basin
+        tmp = np.zeros_like(raw_hist)
+        for cell in area_indices:
+            tmp[cell[0], cell[1]] = nonnan_hist[cell[0], cell[1]]
+        occ_x, occ_y = np.where(tmp != 0.0)
+        relative_area = len(occ_x) / float(total_area)
         relative_weight = nonnan_hist[area_indices[:, 0], area_indices[:, 1]].sum() / float(total_weight)
 
         # Build the `Basin` object using the information we've determined.

@@ -2,8 +2,8 @@
 # 1. https://stackoverflow.com/questions/6103825/how-to-properly-use-unit-testings-assertraises-with-nonetype-objects
 import unittest
 import numpy as np
-from basin_analysis.analyze import check, determine_direction, tiled_grid
-from basin_analysis.analyze import coarse_grain_hist, determine_histogram_directions, partition
+from basin_analysis.analyze import check, determine_histogram_directions, tiled_grid
+from basin_analysis.analyze import coarse_grain_hist, quiver_vectors, partition
 
 
 class TestProject(unittest.TestCase):
@@ -23,6 +23,7 @@ class TestProject(unittest.TestCase):
         stride = 4.0
         acceptance_threshold = 0.25
         sentinel_value = 1
+        print(type(stride))
         with self.assertRaises(RuntimeError):
             check(stride=stride,
                   acceptance_threshold=acceptance_threshold,
@@ -58,7 +59,7 @@ class TestProject(unittest.TestCase):
                     (0, -1), (0, 0), (0, 1),
                     (1, -1), (1, 0), (1, 1)]
         for index, direction in enumerate(directions):
-            self.assertEqual(determine_direction(direction), expected[index])
+            self.assertEqual(quiver_vectors[direction], expected[index])
 
     def test_tiled_grid_shape(self):
         """Check that the shape of the array obtained via `tiled_grid` has the right dimensions."""
